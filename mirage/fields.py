@@ -1,9 +1,8 @@
-import json
 from django.core import exceptions
 from django.db import models
+
 from .crypto import Crypto
 from .exceptions import EncryptedFieldException
-from django.db.models.fields.json import KeyTransform
 
 
 class EncryptedMixin(models.Field):
@@ -11,7 +10,7 @@ class EncryptedMixin(models.Field):
     prepared_max_length = None
 
     def __init__(self, key=None, **kwargs):
-        kwargs.setdefault('max_length', self.prepared_max_length)
+        kwargs.setdefault("max_length", self.prepared_max_length)
         self.crypto = Crypto(key)
         super().__init__(**kwargs)
 
@@ -27,9 +26,9 @@ class EncryptedMixin(models.Field):
         return None
 
     def from_db_value(self, value, expression, connection, *args):
-        if value is None:
-            return value
-        return self.to_python(self.crypto.decrypt(value))
+        if value is not None:
+            return self.to_python(self.crypto.decrypt(value))
+        return None
 
     def get_internal_type(self):
         return self.internal_type
@@ -38,31 +37,9 @@ class EncryptedMixin(models.Field):
 class EncryptedTextField(EncryptedMixin, models.TextField):
     internal_type = "TextField"
 
-class EncryptedJSONField(EncryptedMixin, models.JSONField):
-    internal_type = "TextField"
-
-    def from_db_value(self, value, expression, connection):
-        if value is None:
-            return value
-        if isinstance(expression, KeyTransform) and not isinstance(value, str):
-            return value
-        try:
-            return json.loads(self.crypto.decrypt(value), cls=self.decoder)
-        except json.JSONDecodeError as e:
-            return self.crypto.decrypt(value)
-
-    def get_prep_value(self, value):
-        if value is None:
-            return value
-        return json.dumps(self.crypto.encrypt(json.dumps(value, cls=self.encoder)), cls=self.encoder)
-
 
 class EncryptedCharField(EncryptedMixin, models.CharField):
     prepared_max_length = 255
-
-
-class EncryptedURLField(EncryptedMixin, models.URLField):
-    prepared_max_length = 200
 
 
 class EncryptedEmailField(EncryptedMixin, models.EmailField):
@@ -73,10 +50,16 @@ class EncryptedIntegerField(EncryptedMixin, models.CharField):
     prepared_max_length = 64
 
     def to_python(self, value):
+        if value is None:
+            return value
         try:
             return int(value)
         except (TypeError, ValueError):
-            return value
+            raise exceptions.ValidationError(
+                self.error_messages["invalid"],
+                code="invalid",
+                params={"value": value},
+            )
 
     def check(self, **kwargs):
         return [
